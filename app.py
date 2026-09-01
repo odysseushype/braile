@@ -22,9 +22,14 @@ import threading
 
 from flask import Flask, redirect, render_template, request, url_for
 
+from paths import resource_path
 import vigia_braile as vb
 
-app = Flask(__name__)
+app = Flask(
+    __name__,
+    template_folder=str(resource_path("templates")),
+    static_folder=str(resource_path("static")),
+)
 
 # Lock simples pra evitar dois scans concorrentes disparados pelo dashboard
 # (a mesma falta de lock existe no vigia_braile.py rodando via agendador —

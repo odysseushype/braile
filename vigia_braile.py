@@ -32,24 +32,46 @@ from pathlib import Path
 import pytesseract
 from PIL import Image
 
+from paths import base_dir, resource_path
+
 # ---------------------------------------------------------------------------
 # CONFIG
 # ---------------------------------------------------------------------------
 
-# Pasta raiz a varrer (recursivo — já cobre IMAGENS_ANTIGAS, IMAGENS_ATUAIS
-# e qualquer outra subpasta dentro dela).
+# Pastas raiz a varrer (recursivo — já cobre IMAGENS_ANTIGAS, IMAGENS_ATUAIS
+# e qualquer outra subpasta dentro delas). Lido de `vigia_braile_config.json`,
+# ao lado do .exe/.py — editável sem precisar recompilar/reinstalar nada.
+# Na primeira execução, se o arquivo não existir, ele é criado com um valor
+# padrão de teste.
 #
 # PRODUÇÃO (rodando no Windows, onde H: já está mapeado):
-#     PASTAS_RAIZ = [Path(r"H:\IMAGENS_E_FACAS")]
+#     {"pastas_raiz": ["H:\\IMAGENS_E_FACAS"]}
 #
-# TESTE (rodando agora no M1): H: é um drive de rede mapeado dentro da rede
+# TESTE (rodando no Mac): H: é um drive de rede mapeado dentro da rede
 # Windows da empresa e normalmente NÃO fica acessível direto do Mac sem
 # VPN/permissão de domínio. Mais simples pra testar: copiar algumas amostras
 # reais de _BRAILE.jpg (incluindo pelo menos um caso com "???") pra uma pasta
-# local e apontar pra ela abaixo.
-PASTAS_RAIZ = [
-    Path("~/vigia_braile_teste").expanduser(),
-]
+# local e apontar o config pra ela.
+CONFIG_FILE = base_dir() / "vigia_braile_config.json"
+_PASTAS_RAIZ_PADRAO = [str(Path("~/vigia_braile_teste").expanduser())]
+
+
+def _carregar_pastas_raiz() -> list[Path]:
+    if not CONFIG_FILE.exists():
+        CONFIG_FILE.write_text(
+            json.dumps({"pastas_raiz": _PASTAS_RAIZ_PADRAO}, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        return [Path(p).expanduser() for p in _PASTAS_RAIZ_PADRAO]
+    try:
+        cfg = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+        pastas = cfg.get("pastas_raiz") or _PASTAS_RAIZ_PADRAO
+    except (json.JSONDecodeError, OSError):
+        pastas = _PASTAS_RAIZ_PADRAO
+    return [Path(p).expanduser() for p in pastas]
+
+
+PASTAS_RAIZ = _carregar_pastas_raiz()
 
 FILTRO_NOME = "*_BRAILE*.jpg"   # glob, case-sensitive no Linux/macOS -> ver nota abaixo
 OCR_LANG = "por+eng"
@@ -60,10 +82,15 @@ OCR_LANG = "por+eng"
 # Calibrado em cima de uma amostra real de 2121x1349px.
 CROP_LABEL = (0.80, 0.0, 1.0, 0.10)  # (esquerda, topo, direita, baixo) em % da imagem
 
-SCRIPT_DIR = Path(__file__).resolve().parent
-ESTADO_FILE = SCRIPT_DIR / "vigia_braile_estado.json"
-LOG_FILE = SCRIPT_DIR / "vigia_braile.log"
-CSV_FILE = SCRIPT_DIR / "vigia_braile_resultado.csv"
+ESTADO_FILE = base_dir() / "vigia_braile_estado.json"
+LOG_FILE = base_dir() / "vigia_braile.log"
+CSV_FILE = base_dir() / "vigia_braile_resultado.csv"
+
+# Tesseract embutido no pacote .exe (ver .github/workflows/build-windows.yml):
+# se existir, usa ele em vez de depender de uma instalação do sistema.
+_TESSERACT_EMBUTIDO = resource_path("tesseract", "tesseract.exe")
+if _TESSERACT_EMBUTIDO.exists():
+    pytesseract.pytesseract.tesseract_cmd = str(_TESSERACT_EMBUTIDO)
 
 # Regex pra achar "CÓDIGO PEÇA" (tolerante a variação de OCR/acento) seguido do código.
 # Aceita: CÓDIGO PEÇA, CODIGO PECA, C0DIGO PE(A, etc, e o código logo depois

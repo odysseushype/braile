@@ -1,0 +1,49 @@
+name: Build Windows .exe
+
+on:
+  workflow_dispatch: {}
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Instalar Tesseract OCR (embutido no pacote)
+        run: choco install tesseract --version=5.3.3.20231005 -y
+
+      - name: Instalar dependências Python
+        run: |
+          pip install -r requirements.txt
+          pip install pyinstaller==6.10.0
+
+      - name: Compilar .exe com PyInstaller
+        shell: pwsh
+        run: |
+          pyinstaller --name VigiaBraile --onedir --noconfirm `
+            --add-data "templates;templates" `
+            --add-data "static;static" `
+            --add-data "C:\Program Files\Tesseract-OCR;tesseract" `
+            launcher.py
+
+      - name: Zipar pacote final
+        shell: pwsh
+        run: Compress-Archive -Path dist\VigiaBraile\* -DestinationPath VigiaBraile-windows.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vigia-braile-windows
+          path: VigiaBraile-windows.zip
+
+      - name: Criar Release (apenas em tags)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: VigiaBraile-windows.zip
