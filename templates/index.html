@@ -41,12 +41,19 @@
     </div>
   </section>
 
+  <p class="legenda-tipo">
+    <span class="chip chip-colagem">COLAGEM</span> código CBCG (vermelho) &nbsp;·&nbsp;
+    <span class="chip chip-corte-vinco">CORTE_VINCO</span> código CB (azul, "GENERICO FACA") &nbsp;·&nbsp;
+    <span class="codigo codigo-pendente">CBCG618???</span> peça ainda não fechada
+  </p>
+
   <section class="tabela-wrap">
     <table>
       <thead>
         <tr>
           <th>Status</th>
           <th>Item</th>
+          <th>Tipo</th>
           <th>Código peça</th>
           <th>Arquivo</th>
           <th>Pasta</th>
@@ -58,13 +65,14 @@
         <tr class="linha-{{ r.status | lower | replace('_', '-') }}">
           <td><span class="badge badge-{{ r.status | lower | replace('_', '-') }}">{{ r.status.replace('_', ' ') }}</span></td>
           <td>{{ r.item }}</td>
-          <td>{{ r.codigo_peca or '—' }}</td>
+          <td>{% if r.tipo %}<span class="chip chip-{{ r.tipo | lower | replace('_', '-') }}">{{ r.tipo.replace('_', ' ') }}</span>{% else %}—{% endif %}</td>
+          <td class="codigo {{ 'codigo-pendente' if '?' in r.codigo_peca else '' }}">{{ r.codigo_peca or '—' }}</td>
           <td>{{ r.arquivo }}</td>
           <td class="pasta">{{ r.pasta }}</td>
           <td>{{ r.timestamp }}</td>
         </tr>
         {% else %}
-        <tr><td colspan="6" class="vazio">Nenhum resultado ainda. Clique em "Buscar novos" pra rodar o primeiro scan.</td></tr>
+        <tr><td colspan="7" class="vazio">Nenhum resultado ainda. Clique em "Buscar novos" pra rodar o primeiro scan.</td></tr>
         {% endfor %}
       </tbody>
     </table>

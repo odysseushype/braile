@@ -5,10 +5,14 @@ vigia_braile.py
 1. Varre (recursivamente) uma ou mais pastas atrás de arquivos *_BRAILE*.jpg NOVOS
    (compara contra um estado persistido em disco, então funciona rodando 1-2x/dia
    via agendador, sem precisar ficar de pé o tempo todo).
-2. Pra cada arquivo novo, faz OCR no rótulo "CÓDIGO PEÇA" (impresso em vermelho na
-   imagem) e extrai o código.
+2. Pra cada arquivo novo, faz OCR no código da peça, que aparece em dois formatos
+   de template diferentes:
+     - COLAGEM: código "CBCG..." impresso em vermelho, numa caixa com o rótulo
+       "CÓDIGO PEÇA" no canto superior direito.
+     - CORTE_VINCO: código "CB..." (sem o G) impresso em azul, na frase
+       "<código> GENERICO FACA <n° faca>", posição mais variável na folha.
 3. Classifica como OK (código válido) ou SEM PEÇA CADASTRADA (código ausente ou
-   vindo com placeholder tipo "CBCG618???").
+   vindo com placeholder tipo "CBCG618???" — peça ainda não fechada).
 4. Grava resultado num CSV (um append por execução) + log de texto.
 
 Dependências (dev no M1):
@@ -29,6 +33,7 @@ from dataclasses import dataclass, asdict
 from datetime import datetime
 from pathlib import Path
 
+import numpy as np
 import pytesseract
 from PIL import Image
 
@@ -76,13 +81,28 @@ def pastas_raiz() -> list[Path]:
     return [Path(p).expanduser() for p in pastas]
 
 FILTRO_NOME = "*_BRAILE*.jpg"   # glob, case-sensitive no Linux/macOS -> ver nota abaixo
-OCR_LANG = "por+eng"
 
-# Recorte do rótulo "CÓDIGO PEÇA" (canto superior direito da folha), em frações
-# da largura/altura da imagem — assim funciona independente da resolução exata,
-# desde que o layout do template seja sempre o mesmo (confirmado que sim).
-# Calibrado em cima de uma amostra real de 2121x1349px.
-CROP_LABEL = (0.80, 0.0, 1.0, 0.10)  # (esquerda, topo, direita, baixo) em % da imagem
+# Área de busca pelo código (canto superior direito da folha), em frações da
+# largura/altura da imagem. Não é o recorte final — é só a região onde
+# procuramos pixels vermelhos; por isso pode ser generosa o bastante pra
+# tolerar a margem em branco variável entre um scan e outro (ver
+# `_achar_caixa_vermelha`).
+AREA_BUSCA_CODIGO = (0.55, 0.0, 1.0, 0.25)  # (esquerda, topo, direita, baixo) em % da imagem
+
+# Pixel é considerado "vermelho" (tinta do código impresso) com esses limiares.
+LIMIAR_VERMELHO_MIN = 120
+LIMIAR_VERMELHO_DIF = 60
+
+# Faixas de busca (esquerda, topo, direita, baixo em % da imagem) pro código
+# CORTE_VINCO ("CB... GENERICO FACA"), usado quando não há caixa vermelha.
+# Nas amostras reais essa frase aparece tanto perto do topo quanto perto do
+# rodapé da folha — por isso duas faixas em vez de uma área única: rodar o
+# OCR na página inteira de uma vez faz o Tesseract errar a segmentação e
+# "perder" o texto que teria lido bem numa região menor.
+FAIXAS_BUSCA_CORTE_VINCO = [
+    (0.30, 0.0, 1.0, 0.60),
+    (0.28, 0.30, 1.0, 1.0),
+]
 
 ESTADO_FILE = base_dir() / "vigia_braile_estado.json"
 LOG_FILE = base_dir() / "vigia_braile.log"
@@ -94,17 +114,15 @@ _TESSERACT_EMBUTIDO = resource_path("tesseract", "tesseract.exe")
 if _TESSERACT_EMBUTIDO.exists():
     pytesseract.pytesseract.tesseract_cmd = str(_TESSERACT_EMBUTIDO)
 
-# Regex pra achar "CÓDIGO PEÇA" (tolerante a variação de OCR/acento) seguido do código.
-# Aceita: CÓDIGO PEÇA, CODIGO PECA, C0DIGO PE(A, etc, e o código logo depois
-# (letras/números/? na mesma linha ou na linha seguinte).
-RE_LABEL = re.compile(
-    r"C[ÓO0]DIGO\s*PE[ÇC]A\s*[:\-]?\s*\n?\s*([A-Z0-9?]{4,})",
-    re.IGNORECASE,
-)
-
 # Regex pra extrair o "item" a partir do nome do arquivo, só pra referência no log.
 # Ajustar quando souber o padrão exato do nome.
 RE_ITEM_DO_NOME = re.compile(r"^(\d+)")
+
+# Código CORTE_VINCO: "CB" + código, seguido (com espaço/quebra de linha no
+# meio, tolerado pelo \s*) da frase "GENERICO FACA" — é essa frase ao lado que
+# distingue o código da peça de outros códigos "CB..." que aparecem na folha
+# (ex.: o código da matriz braile, que não é o que nos interessa aqui).
+RE_CORTE_VINCO = re.compile(r"(CB[0-9A-Z?]{4,12})\s*GEN[EÉ]RICO\s*FACA", re.IGNORECASE)
 
 
 # ---------------------------------------------------------------------------
@@ -118,6 +136,7 @@ class Resultado:
     pasta: str
     item: str
     codigo_peca: str
+    tipo: str    # "COLAGEM" | "CORTE_VINCO" | "" (não identificado)
     status: str  # "OK" | "SEM_PECA_CADASTRADA" | "ERRO_OCR"
 
 
@@ -157,26 +176,98 @@ def log(msg: str) -> None:
 # OCR
 # ---------------------------------------------------------------------------
 
-def extrair_codigo_peca(caminho: Path) -> str | None:
-    """Recorta o canto onde fica o rótulo 'CÓDIGO PEÇA' e roda OCR só nele.
+def _achar_caixa_vermelha(img: Image.Image) -> tuple[int, int, int, int] | None:
+    """Localiza a caixa do código impresso em vermelho dentro de
+    `AREA_BUSCA_CODIGO`, procurando pixels vermelhos em vez de recortar uma
+    fração fixa da imagem.
 
-    Recortar em vez de OCR na imagem inteira evita que o texto de colunas
-    vizinhas do template (layout multi-coluna) se misture na leitura.
+    Por que: a margem em branco em volta do template varia de scan pra scan
+    (a mesma folha às vezes é digitalizada com mais ou menos borda), então um
+    recorte fixo erra a posição da caixa em boa parte dos arquivos reais.
+    Buscar pela cor é mais robusto — acha a caixa onde quer que ela esteja
+    dentro do quadrante superior direito — e como bônus filtra sozinho o
+    texto preto do rótulo "CÓDIGO PEÇA" ao redor, isolando só o código.
+
+    Retorna None quando não há pixels vermelhos o bastante na área de busca
+    — sinal de que este arquivo é do template CORTE_VINCO, que não tem essa
+    caixa (ver `_achar_codigo_corte_vinco`).
+    """
+    w, h = img.size
+    l, t, r, b = AREA_BUSCA_CODIGO
+    l, t, r, b = int(w * l), int(h * t), int(w * r), int(h * b)
+    regiao = img.crop((l, t, r, b)).convert("RGB")
+
+    arr = np.asarray(regiao)
+    red, green, blue = arr[:, :, 0].astype(int), arr[:, :, 1].astype(int), arr[:, :, 2].astype(int)
+    mask = (
+        (red > LIMIAR_VERMELHO_MIN)
+        & (red - green > LIMIAR_VERMELHO_DIF)
+        & (red - blue > LIMIAR_VERMELHO_DIF)
+    )
+    ys, xs = np.where(mask)
+    if len(xs) < 20:  # poucos pixels = ruído, não uma caixa de código real
+        return None
+
+    pad = 12
+    x0, x1 = max(int(xs.min()) - pad, 0), min(int(xs.max()) + pad, regiao.width)
+    y0, y1 = max(int(ys.min()) - pad, 0), min(int(ys.max()) + pad, regiao.height)
+    return (l + x0, t + y0, l + x1, t + y1)
+
+
+def _achar_codigo_corte_vinco(img: Image.Image) -> str | None:
+    """Procura o código CORTE_VINCO ("CB..." seguido de "GENERICO FACA"),
+    usado quando não há caixa vermelha na folha.
+
+    Roda OCR em texto livre (não é uma caixa isolada como no caso da
+    colagem) em duas faixas verticais — nas amostras reais essa frase
+    aparece tanto perto do topo quanto perto do rodapé, dependendo do
+    template — e usa `RE_CORTE_VINCO` pra achar o código certo em meio ao
+    resto do texto da folha (incluindo outros códigos "CB..." que não são o
+    código da peça, como o da matriz braile).
+    """
+    w, h = img.size
+    for l, t, r, b in FAIXAS_BUSCA_CORTE_VINCO:
+        crop = img.crop((int(w * l), int(h * t), int(w * r), int(h * b)))
+        texto = pytesseract.image_to_string(crop, lang="por+eng")
+        m = RE_CORTE_VINCO.search(texto)
+        if m:
+            return m.group(1).strip().upper()
+    return None
+
+
+def extrair_codigo_peca(caminho: Path) -> tuple[str, str | None, str]:
+    """Localiza e lê por OCR o código da peça, tentando os dois templates.
+
+    Retorna (motivo, código, tipo):
+      - ("ok", codigo, "COLAGEM")     — caixa vermelha "CÓDIGO PEÇA" (CBCG...).
+      - ("ok", codigo, "CORTE_VINCO") — código "CB..." + "GENERICO FACA".
+      - ("erro", None, "")            — nenhum dos dois padrões foi
+                                          reconhecido (ou falha ao abrir a
+                                          imagem).
     """
     try:
         img = Image.open(caminho)
-        w, h = img.size
-        l, t, r, b = CROP_LABEL
-        crop = img.crop((int(w * l), int(h * t), int(w * r), int(h * b)))
-        texto = pytesseract.image_to_string(crop, lang=OCR_LANG)
+
+        caixa = _achar_caixa_vermelha(img)
+        if caixa is not None:
+            crop = img.crop(caixa)
+            crop = crop.resize((crop.width * 3, crop.height * 3), Image.LANCZOS)
+            texto = pytesseract.image_to_string(
+                crop,
+                lang="eng",
+                config="--psm 7 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789?",
+            ).strip()
+            if texto:
+                return "ok", texto, "COLAGEM"
+
+        codigo_cv = _achar_codigo_corte_vinco(img)
+        if codigo_cv:
+            return "ok", codigo_cv, "CORTE_VINCO"
     except Exception as e:
         log(f"ERRO_OCR em {caminho}: {e}")
-        return None
+        return "erro", None, ""
 
-    m = RE_LABEL.search(texto)
-    if not m:
-        return None
-    return m.group(1).strip()
+    return "erro", None, ""
 
 
 def codigo_valido(codigo: str | None) -> bool:
@@ -194,8 +285,14 @@ def codigo_valido(codigo: str | None) -> bool:
 # ---------------------------------------------------------------------------
 
 def varrer_pastas() -> list[Path]:
-    """Retorna todos os *_BRAILE*.jpg encontrados nas pastas raiz, recursivo."""
-    encontrados: list[Path] = []
+    """Retorna todos os *_BRAILE*.jpg encontrados nas pastas raiz, recursivo.
+
+    Quando o mesmo nome de arquivo aparece em mais de uma pasta (ex.: uma
+    cópia antiga em IMAGENS_ANTIGAS e uma mais nova em IMAGENS_ATUAIS),
+    mantém só a versão com data de modificação mais recente — as demais são
+    ignoradas, não processadas as duas.
+    """
+    encontrados: dict[str, Path] = {}
     for pasta in pastas_raiz():
         if not pasta.exists():
             log(f"AVISO: pasta não encontrada, pulando: {pasta}")
@@ -204,17 +301,24 @@ def varrer_pastas() -> list[Path]:
         # Pra garantir cobertura cross-platform, casamos com FILTRO_NOME em
         # minúsculo manualmente em vez de depender do case do glob.
         for p in pasta.rglob("*.jpg"):
-            if fnmatch.fnmatch(p.name.lower(), FILTRO_NOME.lower()):
-                encontrados.append(p)
-    return encontrados
+            if not fnmatch.fnmatch(p.name.lower(), FILTRO_NOME.lower()):
+                continue
+            chave = p.name.lower()
+            existente = encontrados.get(chave)
+            if existente is None:
+                encontrados[chave] = p
+            elif p.stat().st_mtime > existente.stat().st_mtime:
+                log(f"AVISO: '{p.name}' duplicado em duas pastas — usando o mais recente: {p.parent}")
+                encontrados[chave] = p
+    return list(encontrados.values())
 
 
 def processar_arquivo(caminho: Path) -> Resultado:
-    codigo = extrair_codigo_peca(caminho)
+    motivo, codigo, tipo = extrair_codigo_peca(caminho)
     m_item = RE_ITEM_DO_NOME.match(caminho.stem)
     item = m_item.group(1) if m_item else caminho.stem
 
-    if codigo is None:
+    if motivo == "erro":
         status = "ERRO_OCR"
     elif codigo_valido(codigo):
         status = "OK"
@@ -227,10 +331,11 @@ def processar_arquivo(caminho: Path) -> Resultado:
         pasta=str(caminho.parent),
         item=item,
         codigo_peca=codigo or "",
+        tipo=tipo,
         status=status,
     )
 
-    log(f"[{status}] {caminho.name}  item={item}  código={codigo!r}")
+    log(f"[{status}] {caminho.name}  item={item}  tipo={tipo or '?'}  código={codigo!r}")
     return resultado
 
 

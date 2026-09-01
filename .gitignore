@@ -16,7 +16,9 @@ build/
 dist/
 *.spec
 
-# Pasta local de teste com imagens de amostra
+# Pasta local de teste com imagens de amostra (dados reais de produção —
+# nomes de cliente/produto — não versionar)
 vigia_braile_teste/
+brailes/
 
 .DS_Store

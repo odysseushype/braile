@@ -1,8 +1,17 @@
 # Vigia Braile
 
 Monitora pastas com folhas de peças (`*_BRAILE*.jpg`), extrai por OCR o
-"CÓDIGO PEÇA" impresso na etiqueta e classifica cada peça como **OK** ou
-**SEM PEÇA CADASTRADA** (código ausente ou com placeholder tipo `CBCG618???`).
+código da peça e classifica cada uma como **OK** ou **SEM PEÇA CADASTRADA**
+(peça ainda não fechada — código ausente ou com placeholder tipo
+`CBCG618???`).
+
+O código aparece em dois formatos de template diferentes, e o extrator
+reconhece os dois:
+
+| Tipo | Como aparece | Exemplo |
+|---|---|---|
+| **COLAGEM** | código `CBCG...`, impresso em **vermelho**, numa caixa com o rótulo "CÓDIGO PEÇA" no canto superior direito | `CBCG500211596` |
+| **CORTE_VINCO** | código `CB...` (sem o G), impresso em **azul**, na frase "`<código>` GENERICO FACA `<nº faca>`" — posição mais variável na folha | `CB26C31A` |
 
 Duas partes:
 
@@ -65,9 +74,28 @@ Rodar só o extrator, sem dashboard: `python3 vigia_braile.py`.
 
 - `pastas_raiz` — pastas raiz varridas recursivamente, relidas a cada scan.
   Padrão de fábrica: `H:\IMAGENS_E_FACAS`.
-- `CROP_LABEL` (em `vigia_braile.py`) — recorte (em % da imagem) onde fica
-  o rótulo "CÓDIGO PEÇA". Calibrado para o template atual (2121x1349px);
-  recalibrar se o layout mudar.
+- `AREA_BUSCA_CODIGO` / `FAIXAS_BUSCA_CORTE_VINCO` (em `vigia_braile.py`) —
+  regiões onde o extrator procura, respectivamente, a caixa vermelha
+  (COLAGEM) e o texto "GENERICO FACA" (CORTE_VINCO). São áreas de busca
+  generosas, não um recorte fixo, então toleram variação de margem entre
+  scans; ajustar só se o layout do template mudar de vez.
+
+## Duplicados (mesmo arquivo em duas pastas)
+
+Se o mesmo nome de arquivo aparecer em mais de uma pasta configurada (ex.:
+uma cópia antiga em `IMAGENS_ANTIGAS` e uma mais nova em `IMAGENS_ATUAIS`),
+o scan usa só a versão com **data de modificação mais recente** — a outra é
+ignorada (fica registrado um aviso no log).
+
+## Limitações conhecidas
+
+- `AAAAAA_RELEVO BRAILE.jpg` (espaço em vez de underscore antes de
+  "BRAILE") não é reconhecido pelo filtro `*_BRAILE*.jpg`. Se isso
+  acontecer com frequência em produção, é provável que seja um typo pontual
+  na hora de salvar o arquivo — vale confirmar com quem gera os arquivos.
+- A detecção CORTE_VINCO foi calibrada em cima de só 2 amostras reais; deu
+  100% de acerto nelas, mas vale validar com mais exemplos antes de confiar
+  cegamente no resultado em produção.
 
 ## Dados gerados (não versionados)
 
