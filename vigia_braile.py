@@ -33,9 +33,8 @@ from dataclasses import dataclass, asdict
 from datetime import datetime
 from pathlib import Path
 
-import numpy as np
 import pytesseract
-from PIL import Image
+from PIL import Image, ImageChops
 
 from paths import base_dir, resource_path
 
@@ -197,20 +196,30 @@ def _achar_caixa_vermelha(img: Image.Image) -> tuple[int, int, int, int] | None:
     l, t, r, b = int(w * l), int(h * t), int(w * r), int(h * b)
     regiao = img.crop((l, t, r, b)).convert("RGB")
 
-    arr = np.asarray(regiao)
-    red, green, blue = arr[:, :, 0].astype(int), arr[:, :, 1].astype(int), arr[:, :, 2].astype(int)
-    mask = (
-        (red > LIMIAR_VERMELHO_MIN)
-        & (red - green > LIMIAR_VERMELHO_DIF)
-        & (red - blue > LIMIAR_VERMELHO_DIF)
-    )
-    ys, xs = np.where(mask)
-    if len(xs) < 20:  # poucos pixels = ruído, não uma caixa de código real
+    # Feito só com PIL (sem numpy) de propósito: numpy empacotado com
+    # PyInstaller deu problema pra carregar no .exe em produção (erro de DLL
+    # logo na abertura), e essa conta é simples o bastante pra não precisar
+    # dele. ImageChops.subtract já clampa negativos em 0, então cada máscara
+    # abaixo corresponde exatamente ao equivalente numpy "canal > limiar".
+    red, green, blue = regiao.split()
+    diff_rg = ImageChops.subtract(red, green)
+    diff_rb = ImageChops.subtract(red, blue)
+
+    mask_r = red.point(lambda p: 255 if p > LIMIAR_VERMELHO_MIN else 0)
+    mask_rg = diff_rg.point(lambda p: 255 if p > LIMIAR_VERMELHO_DIF else 0)
+    mask_rb = diff_rb.point(lambda p: 255 if p > LIMIAR_VERMELHO_DIF else 0)
+    mask = ImageChops.darker(ImageChops.darker(mask_r, mask_rg), mask_rb)
+
+    if mask.histogram()[255] < 20:  # poucos pixels = ruído, não uma caixa real
+        return None
+    caixa = mask.getbbox()
+    if caixa is None:
         return None
 
     pad = 12
-    x0, x1 = max(int(xs.min()) - pad, 0), min(int(xs.max()) + pad, regiao.width)
-    y0, y1 = max(int(ys.min()) - pad, 0), min(int(ys.max()) + pad, regiao.height)
+    x0, y0, x1, y1 = caixa
+    x0, x1 = max(x0 - pad, 0), min(x1 + pad, regiao.width)
+    y0, y1 = max(y0 - pad, 0), min(y1 + pad, regiao.height)
     return (l + x0, t + y0, l + x1, t + y1)
 
 

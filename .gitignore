@@ -10,6 +10,7 @@ vigia_braile_config.json
 vigia_braile_estado.json
 vigia_braile.log
 vigia_braile_resultado.csv
+vigia_braile_crash.log
 
 # Build local do PyInstaller
 build/
