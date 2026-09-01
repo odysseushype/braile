@@ -8,7 +8,10 @@
 <body>
   <header>
     <h1>Vigia Braile</h1>
-    <p class="sub">Peças com etiqueta de código Braile — extraídas por OCR de {{ pastas | join(', ') }}</p>
+    <p class="sub">
+      Peças com etiqueta de código Braile — extraídas por OCR de {{ pastas | join(', ') }}
+      · itens {{ prefixos | join('*, ') }}*
+    </p>
   </header>
 
   <section class="cards">

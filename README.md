@@ -69,11 +69,17 @@ Rodar só o extrator, sem dashboard: `python3 vigia_braile.py`.
 `.py` na primeira execução, se não existir):
 
 ```json
-{ "pastas_raiz": ["H:\\IMAGENS_E_FACAS"] }
+{
+  "pastas_raiz": ["H:\\IMAGENS_E_FACAS"],
+  "prefixos_item": ["50021", "618"]
+}
 ```
 
 - `pastas_raiz` — pastas raiz varridas recursivamente, relidas a cada scan.
   Padrão de fábrica: `H:\IMAGENS_E_FACAS`.
+- `prefixos_item` — só processa arquivos cujo nome começa com um desses
+  prefixos; o resto da pasta é ignorado (a pasta tem muito mais itens do
+  que a gente usa). Padrão de fábrica: `50021*` e `618*`.
 - `AREA_BUSCA_CODIGO` / `FAIXAS_BUSCA_CORTE_VINCO` (em `vigia_braile.py`) —
   regiões onde o extrator procura, respectivamente, a caixa vermelha
   (COLAGEM) e o texto "GENERICO FACA" (CORTE_VINCO). São áreas de busca

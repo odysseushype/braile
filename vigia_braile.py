@@ -58,26 +58,46 @@ from paths import base_dir, resource_path
 # reais de _BRAILE.jpg (incluindo pelo menos um caso com "???") pra uma pasta
 # local e apontar o config pra ela, ex. `{"pastas_raiz": ["~/vigia_braile_teste"]}`.
 CONFIG_FILE = base_dir() / "vigia_braile_config.json"
-_PASTAS_RAIZ_PADRAO = [r"H:\IMAGENS_E_FACAS"]
+
+# `prefixos_item`: só itens cujo número (início do nome do arquivo) começa
+# com um desses prefixos são processados — o resto da pasta é ignorado.
+# Hoje só usamos os itens 50021* e 618*; ajustar aqui (ou no
+# vigia_braile_config.json direto) se a faixa de itens mudar.
+_CONFIG_PADRAO = {
+    "pastas_raiz": [r"H:\IMAGENS_E_FACAS"],
+    "prefixos_item": ["50021", "618"],
+}
+
+
+def _carregar_config() -> dict:
+    """Lê `vigia_braile_config.json` do disco a cada chamada — assim, editar
+    o arquivo com o programa já aberto tem efeito no próximo scan, sem
+    precisar reiniciar o .exe. Cria o arquivo com os valores padrão na
+    primeira execução, se ele ainda não existir."""
+    if not CONFIG_FILE.exists():
+        CONFIG_FILE.write_text(
+            json.dumps(_CONFIG_PADRAO, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        return dict(_CONFIG_PADRAO)
+    try:
+        cfg = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        log(f"AVISO: {CONFIG_FILE.name} corrompido/ilegível, usando padrão de fábrica.")
+        return dict(_CONFIG_PADRAO)
+    # completa com o padrão qualquer chave ausente (ex.: config salvo antes
+    # de 'prefixos_item' existir).
+    return {**_CONFIG_PADRAO, **cfg}
 
 
 def pastas_raiz() -> list[Path]:
-    """Lê `vigia_braile_config.json` do disco a cada chamada — assim, editar
-    o arquivo com o programa já aberto tem efeito no próximo scan, sem
-    precisar reiniciar o .exe."""
-    if not CONFIG_FILE.exists():
-        CONFIG_FILE.write_text(
-            json.dumps({"pastas_raiz": _PASTAS_RAIZ_PADRAO}, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
-        return [Path(p).expanduser() for p in _PASTAS_RAIZ_PADRAO]
-    try:
-        cfg = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
-        pastas = cfg.get("pastas_raiz") or _PASTAS_RAIZ_PADRAO
-    except (json.JSONDecodeError, OSError):
-        log(f"AVISO: {CONFIG_FILE.name} corrompido/ilegível, usando pasta de teste padrão.")
-        pastas = _PASTAS_RAIZ_PADRAO
+    pastas = _carregar_config().get("pastas_raiz") or _CONFIG_PADRAO["pastas_raiz"]
     return [Path(p).expanduser() for p in pastas]
+
+
+def prefixos_item() -> list[str]:
+    prefixos = _carregar_config().get("prefixos_item") or _CONFIG_PADRAO["prefixos_item"]
+    return [str(p) for p in prefixos]
 
 FILTRO_NOME = "*_BRAILE*.jpg"   # glob, case-sensitive no Linux/macOS -> ver nota abaixo
 
@@ -294,13 +314,16 @@ def codigo_valido(codigo: str | None) -> bool:
 # ---------------------------------------------------------------------------
 
 def varrer_pastas() -> list[Path]:
-    """Retorna todos os *_BRAILE*.jpg encontrados nas pastas raiz, recursivo.
+    """Retorna todos os *_BRAILE*.jpg encontrados nas pastas raiz, recursivo,
+    restrito aos itens cujo nome começa com um dos `prefixos_item` do
+    config (ex.: 50021*, 618*) — o resto da pasta é ignorado.
 
     Quando o mesmo nome de arquivo aparece em mais de uma pasta (ex.: uma
     cópia antiga em IMAGENS_ANTIGAS e uma mais nova em IMAGENS_ATUAIS),
     mantém só a versão com data de modificação mais recente — as demais são
     ignoradas, não processadas as duas.
     """
+    prefixos = tuple(prefixos_item())
     encontrados: dict[str, Path] = {}
     for pasta in pastas_raiz():
         if not pasta.exists():
@@ -311,6 +334,8 @@ def varrer_pastas() -> list[Path]:
         # minúsculo manualmente em vez de depender do case do glob.
         for p in pasta.rglob("*.jpg"):
             if not fnmatch.fnmatch(p.name.lower(), FILTRO_NOME.lower()):
+                continue
+            if prefixos and not p.name.startswith(prefixos):
                 continue
             chave = p.name.lower()
             existente = encontrados.get(chave)

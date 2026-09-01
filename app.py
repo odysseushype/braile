@@ -70,6 +70,7 @@ def index():
         status_filtro=status_filtro,
         busca=busca,
         pastas=[str(p) for p in vb.pastas_raiz()],
+        prefixos=vb.prefixos_item(),
     )
 
 
