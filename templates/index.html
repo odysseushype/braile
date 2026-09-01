@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="pt-br">
+<head>
+  <meta charset="utf-8">
+  <title>Vigia Braile — Gerenciamento</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <header>
+    <h1>Vigia Braile</h1>
+    <p class="sub">Peças com etiqueta de código Braile — extraídas por OCR de {{ pastas | join(', ') }}</p>
+  </header>
+
+  <section class="cards">
+    <div class="card total"><span class="num">{{ resumo.total }}</span><span class="label">Total</span></div>
+    <div class="card ok"><span class="num">{{ resumo.ok }}</span><span class="label">OK</span></div>
+    <div class="card sem-peca"><span class="num">{{ resumo.sem_peca }}</span><span class="label">Sem peça cadastrada</span></div>
+    <div class="card erro"><span class="num">{{ resumo.erro_ocr }}</span><span class="label">Erro de OCR</span></div>
+  </section>
+
+  <section class="toolbar">
+    <form method="get" class="filtros">
+      <select name="status" onchange="this.form.submit()">
+        <option value="TODOS" {{ 'selected' if status_filtro == 'TODOS' }}>Todos os status</option>
+        <option value="OK" {{ 'selected' if status_filtro == 'OK' }}>OK</option>
+        <option value="SEM_PECA_CADASTRADA" {{ 'selected' if status_filtro == 'SEM_PECA_CADASTRADA' }}>Sem peça cadastrada</option>
+        <option value="ERRO_OCR" {{ 'selected' if status_filtro == 'ERRO_OCR' }}>Erro de OCR</option>
+      </select>
+      <input type="text" name="q" placeholder="Buscar por item, arquivo ou código..." value="{{ busca }}">
+      <button type="submit">Filtrar</button>
+    </form>
+
+    <div class="acoes">
+      <form method="post" action="{{ url_for('scan') }}">
+        <button type="submit" class="btn-primario">Buscar novos</button>
+      </form>
+      <form method="post" action="{{ url_for('scan') }}">
+        <input type="hidden" name="reprocessar_pendentes" value="1">
+        <button type="submit" class="btn-secundario">Reprocessar pendentes</button>
+      </form>
+    </div>
+  </section>
+
+  <section class="tabela-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Status</th>
+          <th>Item</th>
+          <th>Código peça</th>
+          <th>Arquivo</th>
+          <th>Pasta</th>
+          <th>Processado em</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in linhas %}
+        <tr class="linha-{{ r.status | lower | replace('_', '-') }}">
+          <td><span class="badge badge-{{ r.status | lower | replace('_', '-') }}">{{ r.status.replace('_', ' ') }}</span></td>
+          <td>{{ r.item }}</td>
+          <td>{{ r.codigo_peca or '—' }}</td>
+          <td>{{ r.arquivo }}</td>
+          <td class="pasta">{{ r.pasta }}</td>
+          <td>{{ r.timestamp }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="6" class="vazio">Nenhum resultado ainda. Clique em "Buscar novos" pra rodar o primeiro scan.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+</body>
+</html>

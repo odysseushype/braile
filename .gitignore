@@ -1,0 +1,16 @@
+# Ambiente Python
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# Dados/estado gerados em tempo de execução (contêm caminhos internos da rede
+# da empresa e resultados de produção — não versionar)
+vigia_braile_estado.json
+vigia_braile.log
+vigia_braile_resultado.csv
+
+# Pasta local de teste com imagens de amostra
+vigia_braile_teste/
+
+.DS_Store
