@@ -69,7 +69,7 @@ def index():
         resumo=resumo,
         status_filtro=status_filtro,
         busca=busca,
-        pastas=[str(p) for p in vb.PASTAS_RAIZ],
+        pastas=[str(p) for p in vb.pastas_raiz()],
     )
 
 

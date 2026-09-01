@@ -40,23 +40,27 @@ from paths import base_dir, resource_path
 
 # Pastas raiz a varrer (recursivo — já cobre IMAGENS_ANTIGAS, IMAGENS_ATUAIS
 # e qualquer outra subpasta dentro delas). Lido de `vigia_braile_config.json`,
-# ao lado do .exe/.py — editável sem precisar recompilar/reinstalar nada.
-# Na primeira execução, se o arquivo não existir, ele é criado com um valor
-# padrão de teste.
+# ao lado do .exe/.py — editável sem precisar recompilar/reinstalar nada, e
+# relido a cada scan (não precisa reiniciar o programa depois de editar).
+# Na primeira execução, se o arquivo não existir, ele é criado já com o
+# padrão de produção abaixo.
 #
-# PRODUÇÃO (rodando no Windows, onde H: já está mapeado):
+# PRODUÇÃO (rodando no Windows, onde H: já está mapeado) — padrão de fábrica:
 #     {"pastas_raiz": ["H:\\IMAGENS_E_FACAS"]}
 #
 # TESTE (rodando no Mac): H: é um drive de rede mapeado dentro da rede
 # Windows da empresa e normalmente NÃO fica acessível direto do Mac sem
 # VPN/permissão de domínio. Mais simples pra testar: copiar algumas amostras
 # reais de _BRAILE.jpg (incluindo pelo menos um caso com "???") pra uma pasta
-# local e apontar o config pra ela.
+# local e apontar o config pra ela, ex. `{"pastas_raiz": ["~/vigia_braile_teste"]}`.
 CONFIG_FILE = base_dir() / "vigia_braile_config.json"
-_PASTAS_RAIZ_PADRAO = [str(Path("~/vigia_braile_teste").expanduser())]
+_PASTAS_RAIZ_PADRAO = [r"H:\IMAGENS_E_FACAS"]
 
 
-def _carregar_pastas_raiz() -> list[Path]:
+def pastas_raiz() -> list[Path]:
+    """Lê `vigia_braile_config.json` do disco a cada chamada — assim, editar
+    o arquivo com o programa já aberto tem efeito no próximo scan, sem
+    precisar reiniciar o .exe."""
     if not CONFIG_FILE.exists():
         CONFIG_FILE.write_text(
             json.dumps({"pastas_raiz": _PASTAS_RAIZ_PADRAO}, ensure_ascii=False, indent=2),
@@ -67,11 +71,9 @@ def _carregar_pastas_raiz() -> list[Path]:
         cfg = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
         pastas = cfg.get("pastas_raiz") or _PASTAS_RAIZ_PADRAO
     except (json.JSONDecodeError, OSError):
+        log(f"AVISO: {CONFIG_FILE.name} corrompido/ilegível, usando pasta de teste padrão.")
         pastas = _PASTAS_RAIZ_PADRAO
     return [Path(p).expanduser() for p in pastas]
-
-
-PASTAS_RAIZ = _carregar_pastas_raiz()
 
 FILTRO_NOME = "*_BRAILE*.jpg"   # glob, case-sensitive no Linux/macOS -> ver nota abaixo
 OCR_LANG = "por+eng"
@@ -194,7 +196,7 @@ def codigo_valido(codigo: str | None) -> bool:
 def varrer_pastas() -> list[Path]:
     """Retorna todos os *_BRAILE*.jpg encontrados nas pastas raiz, recursivo."""
     encontrados: list[Path] = []
-    for pasta in PASTAS_RAIZ:
+    for pasta in pastas_raiz():
         if not pasta.exists():
             log(f"AVISO: pasta não encontrada, pulando: {pasta}")
             continue

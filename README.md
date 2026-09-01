@@ -27,13 +27,11 @@ ver [`.github/workflows/build-windows.yml`](.github/workflows/build-windows.yml)
 3. Dê duplo clique em `VigiaBraile.exe`. Ele abre uma janela de log e o
    navegador padrão já aponta pro dashboard (`http://127.0.0.1:5000`).
 4. Na **primeira execução**, o programa cria `vigia_braile_config.json` ao
-   lado do `.exe`. Edite esse arquivo pra apontar pras pastas de produção,
-   por exemplo:
-   ```json
-   { "pastas_raiz": ["H:\\IMAGENS_E_FACAS"] }
-   ```
-   e clique em **Buscar novos** no dashboard (não precisa reiniciar o
-   programa, o valor é lido a cada scan).
+   lado do `.exe` já apontando pra pasta de produção padrão
+   (`H:\IMAGENS_E_FACAS`) — não precisa editar nada pra usar. Se precisar
+   apontar pra outro lugar, edite esse JSON e clique em **Buscar novos** no
+   dashboard (o valor é relido a cada scan, não precisa reiniciar o
+   programa).
 
 Não precisa instalar Python, Tesseract nem nada — é só extrair e rodar.
 
@@ -65,8 +63,8 @@ Rodar só o extrator, sem dashboard: `python3 vigia_braile.py`.
 { "pastas_raiz": ["H:\\IMAGENS_E_FACAS"] }
 ```
 
-- `pastas_raiz` — pastas raiz varridas recursivamente. Padrão de teste:
-  `~/vigia_braile_teste`.
+- `pastas_raiz` — pastas raiz varridas recursivamente, relidas a cada scan.
+  Padrão de fábrica: `H:\IMAGENS_E_FACAS`.
 - `CROP_LABEL` (em `vigia_braile.py`) — recorte (em % da imagem) onde fica
   o rótulo "CÓDIGO PEÇA". Calibrado para o template atual (2121x1349px);
   recalibrar se o layout mudar.
