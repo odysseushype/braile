@@ -19,6 +19,7 @@
     <div class="card ok"><span class="num">{{ resumo.ok }}</span><span class="label">OK</span></div>
     <div class="card sem-peca"><span class="num">{{ resumo.sem_peca }}</span><span class="label">Sem peça cadastrada</span></div>
     <div class="card erro"><span class="num">{{ resumo.erro_ocr }}</span><span class="label">Erro de OCR</span></div>
+    <div class="card baixa-confianca"><span class="num">{{ resumo.baixa_confianca }}</span><span class="label">Baixa confiança</span></div>
   </section>
 
   <section class="toolbar">
@@ -28,6 +29,7 @@
         <option value="OK" {{ 'selected' if status_filtro == 'OK' }}>OK</option>
         <option value="SEM_PECA_CADASTRADA" {{ 'selected' if status_filtro == 'SEM_PECA_CADASTRADA' }}>Sem peça cadastrada</option>
         <option value="ERRO_OCR" {{ 'selected' if status_filtro == 'ERRO_OCR' }}>Erro de OCR</option>
+        <option value="BAIXA_CONFIANCA" {{ 'selected' if status_filtro == 'BAIXA_CONFIANCA' }}>Baixa confiança (conferir)</option>
       </select>
       <input type="text" name="q" placeholder="Buscar por item, arquivo ou código..." value="{{ busca }}">
       <button type="submit">Filtrar</button>
@@ -46,8 +48,9 @@
 
   <p class="legenda-tipo">
     <span class="chip chip-colagem">COLAGEM</span> código CBCG (vermelho) &nbsp;·&nbsp;
-    <span class="chip chip-corte-vinco">CORTE_VINCO</span> código CB (azul, "GENERICO FACA") &nbsp;·&nbsp;
-    <span class="codigo codigo-pendente">CBCG618???</span> peça ainda não fechada
+    <span class="chip chip-corte-vinco">CORTE_VINCO</span> código CB (preto, junto à placa braile — nunca o código azul da FACA) &nbsp;·&nbsp;
+    <span class="codigo codigo-pendente">CBCG618???</span> peça ainda não fechada &nbsp;·&nbsp;
+    <span class="badge badge-baixa-confianca">baixa confiança</span> texto pequeno demais/scan ruim — vale conferir a imagem original
   </p>
 
   <section class="tabela-wrap">
@@ -69,7 +72,10 @@
           <td><span class="badge badge-{{ r.status | lower | replace('_', '-') }}">{{ r.status.replace('_', ' ') }}</span></td>
           <td>{{ r.item }}</td>
           <td>{% if r.tipo %}<span class="chip chip-{{ r.tipo | lower | replace('_', '-') }}">{{ r.tipo.replace('_', ' ') }}</span>{% else %}—{% endif %}</td>
-          <td class="codigo {{ 'codigo-pendente' if '?' in r.codigo_peca else '' }}">{{ r.codigo_peca or '—' }}</td>
+          <td class="codigo {{ 'codigo-pendente' if '?' in r.codigo_peca else '' }}">
+            {{ r.codigo_peca or '—' }}
+            {% if r.baixa_confianca == 'True' %}<span class="badge badge-baixa-confianca">baixa confiança</span>{% endif %}
+          </td>
           <td>{{ r.arquivo }}</td>
           <td class="pasta">{{ r.pasta }}</td>
           <td>{{ r.timestamp }}</td>

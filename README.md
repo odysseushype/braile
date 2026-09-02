@@ -5,13 +5,19 @@ código da peça e classifica cada uma como **OK** ou **SEM PEÇA CADASTRADA**
 (peça ainda não fechada — código ausente ou com placeholder tipo
 `CBCG618???`).
 
-O código aparece em dois formatos de template diferentes, e o extrator
-reconhece os dois:
+O código aparece em pelo menos 4 templates visuais diferentes (com/sem
+cabeçalho ACCUBRAILLE, com/sem caixa vermelha, texto na horizontal ou na
+vertical), mas só em 2 formatos de fundo — o extrator reconhece os dois:
 
 | Tipo | Como aparece | Exemplo |
 |---|---|---|
 | **COLAGEM** | código `CBCG...`, impresso em **vermelho**, numa caixa com o rótulo "CÓDIGO PEÇA" no canto superior direito | `CBCG500211596` |
 | **CORTE_VINCO** | código `CB...` impresso em **preto**, colado à placa/padrão braile (às vezes na vertical) — não confundir com o código **azul** ao lado de "GENERICO FACA", que é o código da FACA (ferramenta), não da peça | `CB17G19A` |
+
+Validado contra **922 arquivos reais de produção** (pasta de amostras, não
+versionada): **897 OK (97,3%)**, **13 sem peça cadastrada (1,4%)**, **12
+erro de OCR (1,3%)**. Ver "Baixa confiança" e "Limitações conhecidas"
+abaixo pra saber quando desconfiar de um resultado.
 
 Duas partes:
 
@@ -82,9 +88,9 @@ Rodar só o extrator, sem dashboard: `python3 vigia_braile.py`.
   que a gente usa). Padrão de fábrica: `50021*` e `618*`.
 - `AREA_BUSCA_CODIGO` / `FAIXAS_BUSCA_CORTE_VINCO` (em `vigia_braile.py`) —
   regiões onde o extrator procura, respectivamente, a caixa vermelha
-  (COLAGEM) e o texto "GENERICO FACA" (CORTE_VINCO). São áreas de busca
-  generosas, não um recorte fixo, então toleram variação de margem entre
-  scans; ajustar só se o layout do template mudar de vez.
+  (COLAGEM) e o código junto da placa braile (CORTE_VINCO). São áreas de
+  busca generosas, não um recorte fixo, então toleram variação de margem
+  entre scans; ajustar só se o layout do template mudar de vez.
 
 ## Duplicados
 
@@ -98,22 +104,40 @@ Rodar só o extrator, sem dashboard: `python3 vigia_braile.py`.
   mais recente** — o RELEVO às vezes tem data mais nova, mas não é o que
   tem o código.
 
+## Baixa confiança
+
+A extração CORTE_VINCO tem 3 níveis internos, do mais rápido/confiável pro
+mais lento/incerto: (1) localizar a palavra do código direto na região
+principal, (2) o mesmo em tiles menores (texto pequeno demais pra região
+inteira), (3) **força bruta** — OCR fino direto em cada tile, sem
+localizar a palavra antes. Quando um código só é achado no nível 3, a
+linha vem marcada **`baixa_confianca = True`** (badge roxo "baixa
+confiança" no dashboard, filtro dedicado) — nas 922 amostras isso
+aconteceu em 7 arquivos (0,8%). Não é motivo pra desconfiar do status
+SEM_PECA_CADASTRADA/OK em si, mas o texto exato do código pode ter ruído
+(ex.: dígito a mais/a menos colado do texto vizinho) — vale abrir a
+imagem original antes de usar esse código em outro sistema.
+
 ## Limitações conhecidas
 
 - `AAAAAA_RELEVO BRAILE.jpg` (espaço em vez de underscore antes de
   "BRAILE") não é reconhecido pelo filtro `*_BRAILE*.jpg`. Se isso
   acontecer com frequência em produção, é provável que seja um typo pontual
   na hora de salvar o arquivo — vale confirmar com quem gera os arquivos.
-- A detecção CORTE_VINCO foi calibrada em cima de 7 amostras reais (2
-  templates visuais diferentes); deu certo em 6/7 — ainda vale validar com
-  mais exemplos antes de confiar cegamente no resultado em produção. Erros
-  típicos de OCR nesse template ficam entre O/0 (ex.: `CB17IO9A` em vez de
-  `CB17I09A`).
 - Folhas de aprovação de FACA compartilhadas entre vários itens (várias
   peças/SKUs na mesma folha, sem um código de peça braile individual —
   só o código da FACA repetido) caem como `ERRO_OCR`: não tem como saber
   OK/SEM PEÇA CADASTRADA a partir desse tipo de arquivo, então fica pra
-  conferência manual.
+  conferência manual. Isso responde por boa parte dos 12 `ERRO_OCR`
+  residuais nas 922 amostras.
+- Erros típicos de OCR no CORTE_VINCO ficam entre dígitos parecidos
+  (O/0, 1/I) — o extrator já tolera essa confusão na primeira letra do
+  código, mas pode sobrar ruído no resto (ver "Baixa confiança" acima).
+- Imagens muito grandes (>178 milhões de pixels — ex.: scan em DPI alto
+  demais por engano) não são mais rejeitadas (`Image.MAX_IMAGE_PIXELS =
+  None` em `vigia_braile.py`, desligando a proteção padrão do PIL contra
+  "decompression bomb"): seguro aqui porque são sempre arquivos internos
+  confiáveis, nunca upload de terceiro.
 
 ## Dados gerados (não versionados)
 

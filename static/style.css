@@ -11,6 +11,8 @@
   --err: #991b1b;
   --err-bg: #fde2e2;
   --primary: #2f5eff;
+  --baixa-confianca: #6d28d9;
+  --baixa-confianca-bg: #ede9fe;
 }
 
 * { box-sizing: border-box; }
@@ -28,10 +30,10 @@ header .sub { margin: 0 0 24px; color: var(--muted); font-size: 13px; }
 
 .cards {
   display: grid;
-  grid-template-columns: repeat(4, minmax(140px, 1fr));
+  grid-template-columns: repeat(5, minmax(140px, 1fr));
   gap: 12px;
   margin-bottom: 20px;
-  max-width: 720px;
+  max-width: 880px;
 }
 
 .card {
@@ -48,6 +50,7 @@ header .sub { margin: 0 0 24px; color: var(--muted); font-size: 13px; }
 .card.ok .num { color: var(--ok); }
 .card.sem-peca .num { color: var(--warn); }
 .card.erro .num { color: var(--err); }
+.card.baixa-confianca .num { color: var(--baixa-confianca); }
 
 .toolbar {
   display: flex;
@@ -105,6 +108,7 @@ tr:last-child td { border-bottom: none; }
 .badge-ok { background: var(--ok-bg); color: var(--ok); }
 .badge-sem-peca-cadastrada { background: var(--warn-bg); color: var(--warn); }
 .badge-erro-ocr { background: var(--err-bg); color: var(--err); }
+.badge-baixa-confianca { background: var(--baixa-confianca-bg); color: var(--baixa-confianca); margin-left: 6px; }
 
 .legenda-tipo {
   margin: -10px 0 16px;

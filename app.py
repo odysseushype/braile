@@ -44,7 +44,9 @@ def index():
 
     linhas = vb.ler_resultados()
 
-    if status_filtro != "TODOS":
+    if status_filtro == "BAIXA_CONFIANCA":
+        linhas = [r for r in linhas if r["baixa_confianca"] == "True"]
+    elif status_filtro != "TODOS":
         linhas = [r for r in linhas if r["status"] == status_filtro]
 
     if busca:
@@ -61,6 +63,7 @@ def index():
         "ok": sum(1 for r in todas if r["status"] == "OK"),
         "sem_peca": sum(1 for r in todas if r["status"] == "SEM_PECA_CADASTRADA"),
         "erro_ocr": sum(1 for r in todas if r["status"] == "ERRO_OCR"),
+        "baixa_confianca": sum(1 for r in todas if r["baixa_confianca"] == "True"),
     }
 
     return render_template(

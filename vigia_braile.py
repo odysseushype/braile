@@ -38,6 +38,15 @@ from PIL import Image, ImageChops
 
 from paths import base_dir, resource_path
 
+# Desliga o limite de "decompression bomb" do PIL: achado real (item
+# 500212555, scan de 19602x14473px = ~284 milhões de pixels) — o padrão do
+# PIL (~178 milhões) rejeita esse arquivo com ERRO_OCR mesmo sendo um scan
+# legítimo, só em resolução alta demais. São sempre arquivos internos
+# confiáveis da rede da empresa, não uploads de terceiros, então não faz
+# sentido manter essa proteção (pensada pra imagem vinda de fonte não
+# confiável) ligada aqui.
+Image.MAX_IMAGE_PIXELS = None
+
 # ---------------------------------------------------------------------------
 # CONFIG
 # ---------------------------------------------------------------------------
@@ -117,10 +126,13 @@ LIMIAR_VERMELHO_DIF = 60
 # código aparece tanto perto do topo quanto perto do rodapé da folha — por
 # isso duas faixas em vez de uma área única: rodar o OCR na página inteira
 # de uma vez faz o Tesseract errar a segmentação e "perder" texto que teria
-# lido bem numa região menor.
+# lido bem numa região menor. Achado real (item 50021833, template sem
+# cabeçalho ACCUBRAILLE): nesse layout o código fica bem mais à esquerda
+# (x≈18% da largura) que nos outros (x≈28-30%) — por isso a borda esquerda
+# é bem mais generosa aqui do que nos primeiros templates calibrados.
 FAIXAS_BUSCA_CORTE_VINCO = [
-    (0.30, 0.0, 1.0, 0.60),
-    (0.28, 0.30, 1.0, 1.0),
+    (0.15, 0.0, 1.0, 0.60),
+    (0.15, 0.30, 1.0, 1.0),
 ]
 
 # Tamanho mínimo de um "candidato a código" (depois de tirar espaço/pontuação)
@@ -147,9 +159,16 @@ if _TESSERACT_EMBUTIDO.exists():
 # Ajustar quando souber o padrão exato do nome.
 RE_ITEM_DO_NOME = re.compile(r"^(\d+)")
 
-# Formato do código depois do OCR fino (ver `_ler_codigo_fino`): "CB" + até
-# 8 caracteres alfanuméricos/"?".
-RE_CODIGO_PLACA = re.compile(r"CB[0-9A-Z?]{3,8}")
+# Formato do código depois do OCR fino (ver `_ler_codigo_fino`): "CB" +
+# OBRIGATORIAMENTE um dígito (ou "I"/"O", que o OCR troca com "1"/"0" o
+# tempo todo — sem aceitar essas duas o fix abaixo rejeitava leituras
+# corretas tipo "CBI7K16A", só porque o "1" saiu "I") logo após "CB" + até
+# 7 caracteres alfanuméricos/"?". Achado real: sem essa exigência, o
+# fallback de força bruta ocasionalmente "lia" ruído puro como código
+# (ex.: "CBLINOLAWC", "CBLOI?77TS" — nenhum código real começa com uma
+# letra qualquer logo depois do CB), e isso virava "OK" com um código
+# errado — pior que reportar erro, porque parece confiável e não é.
+RE_CODIGO_PLACA = re.compile(r"CB[0-9IO][0-9A-Z?]{2,7}")
 
 
 # ---------------------------------------------------------------------------
@@ -165,6 +184,7 @@ class Resultado:
     codigo_peca: str
     tipo: str    # "COLAGEM" | "CORTE_VINCO" | "" (não identificado)
     status: str  # "OK" | "SEM_PECA_CADASTRADA" | "ERRO_OCR"
+    baixa_confianca: bool  # True = achado só no fallback de força bruta; vale conferir manualmente
 
 
 # ---------------------------------------------------------------------------
@@ -337,19 +357,154 @@ def _achar_codigo_corte_vinco(img: Image.Image) -> str | None:
     return None
 
 
-def extrair_codigo_peca(caminho: Path) -> tuple[str, str | None, str]:
+LARGURA_TILE_BRUTO = 60
+PASSO_TILE_BRUTO = 30
+# Padding horizontal bem menor que `PAD_CANDIDATO_X` (25px) -- achado real
+# (item 618022): nesse sub-template as palavras vizinhas (código, número
+# do item, nome do produto) ficam só ~8px uma da outra, então o padding
+# do caminho principal (calibrado pro layout mais espaçado do COLAGEM)
+# engolia o começo da palavra seguinte no recorte, contaminando o código
+# lido (ex.: "CB17K16A" virava "CB17K16A61", grudando o "61" de "618022").
+PAD_CANDIDATO_X_BRUTO = 3
+
+
+def _achar_codigo_corte_vinco_bruto(img: Image.Image) -> str | None:
+    """Fallback pra quando `_achar_codigo_corte_vinco` não acha nada --
+    achado real 2026-09-02, calibrando contra 953 amostras reais (família
+    EMS 618xxx/50021xxx): nesse sub-template o texto do código fica bem
+    pequeno, e o Tesseract simplesmente não marca essa região como
+    "palavra" quando o passe de `image_to_data` roda na FAIXA INTEIRA de
+    uma vez (região grande demais, mistura demais coisa) -- não é
+    confusão com os pontinhos braile (testado isolado: o texto está limpo,
+    separado dos pontos por uma linha), é escala/quantidade de conteúdo no
+    mesmo `image_to_data`.
+
+    BUG achado na 1ª versão desse fallback (usava `image_to_string`, texto
+    corrido, em vez de `image_to_data`): sem separação de palavra, o
+    código colava direto no texto vizinho (ex. real: item 618022, código
+    certo "CB17K16A" virou "CBI7K16A61" -- os 2 primeiros dígitos de
+    "618022", o item logo depois na mesma linha, grudaram no fim por
+    causa do regex sem fronteira de palavra). CONFIRMADO com o mesmo
+    recorte: `image_to_data` SEPARA "CBI7K16A" de "610022" como palavras
+    distintas -- é só uma questão de rodar em tiles menores que a faixa
+    inteira (não em texto corrido). Por isso esse fallback reusa a MESMA
+    lógica de candidato/exclusão de `_achar_codigo_corte_vinco` (não
+    reinventa), só que iterando tiles (`LARGURA_TILE_BRUTO`, sobrepostos
+    por `PASSO_TILE_BRUTO` pra não cortar uma palavra bem na borda do
+    tile) em vez da faixa inteira de uma vez."""
+    w, h = img.size
+    for l, t, r, b in FAIXAS_BUSCA_CORTE_VINCO:
+        regiao_l, regiao_t = int(w * l), int(h * t)
+        regiao_r, regiao_b = int(w * r), int(h * b)
+        x = regiao_l
+        while x < regiao_r:
+            tile = img.crop((x, regiao_t, min(x + LARGURA_TILE_BRUTO, regiao_r), regiao_b))
+            # Rotaciona o TILE inteiro antes do image_to_data -- achado
+            # real: sem isso, o Tesseract não separa as palavras verticais
+            # (texto vira "sopa" sem word-boxes). Roda o candidato/recorte
+            # todo em cima do tile já rotacionado (coordenadas do tile
+            # rotacionado, não precisa mapear de volta pro original -- a
+            # palavra recortada daqui já sai na orientação certa pro
+            # `_ler_codigo_fino`, por isso `vertical=False` abaixo).
+            rot = tile.rotate(-90, expand=True)
+            data = pytesseract.image_to_data(rot, lang="por+eng", output_type=pytesseract.Output.DICT)
+
+            for i, txt in enumerate(data["text"]):
+                if not _candidato_valido(txt.strip()):
+                    continue
+                proximas = " ".join(data["text"][i + 1:i + 4]).upper()
+                if "GENERIC" in proximas or "FACA" in proximas:
+                    continue
+
+                lx, ty = data["left"][i], data["top"][i]
+                largura, altura = data["width"][i], data["height"][i]
+                if largura < 3 or altura < 3:
+                    continue
+
+                x0 = max(lx - PAD_CANDIDATO_X_BRUTO, 0)
+                y0 = max(ty - PAD_CANDIDATO_Y, 0)
+                x1 = min(lx + largura + PAD_CANDIDATO_X_BRUTO, rot.width)
+                y1 = min(ty + altura + PAD_CANDIDATO_Y, rot.height)
+                palavra = rot.crop((x0, y0, x1, y1))
+                palavra = palavra.resize(
+                    (palavra.width * AMPLIACAO_CANDIDATO, palavra.height * AMPLIACAO_CANDIDATO),
+                    Image.LANCZOS,
+                )
+
+                resultado = _ler_codigo_fino(palavra, vertical=False)
+                if resultado:
+                    return resultado
+            x += PASSO_TILE_BRUTO
+    return None
+
+
+LARGURA_TILE_FORCA_BRUTA = 70
+PASSO_TILE_FORCA_BRUTA = 35
+
+
+def _achar_codigo_corte_vinco_forca_bruta(img: Image.Image) -> str | None:
+    """Último fallback, só quando nem `_achar_codigo_corte_vinco` nem
+    `_achar_codigo_corte_vinco_bruto` acham nada -- achado real (item
+    50021833, template sem cabeçalho ACCUBRAILLE, aprovação estilo "SANOFI
+    AVENTIS" antigo): mesmo rodando em tiles, o `image_to_data` às vezes
+    simplesmente falha em separar a palavra do código como um "word box"
+    nesse template (a rotação + o texto vizinho — "NATURETTI", o range de
+    item "50021833 - 50021834" — confundem a segmentação), mesmo a palavra
+    estando nitidamente legível quando isolada manualmente. Contornado
+    pulando o passo de localização por palavra inteiramente: roda o OCR
+    FINO (mesmo charset restrito de `_ler_codigo_fino`) direto em cada
+    tile, e procura o código no texto resultante via regex. Mais lento (um
+    OCR fino de verdade por tile, não só quando acha candidato) — por isso
+    é o último recurso, não o primeiro.
+    """
+    w, h = img.size
+    for l, t, r, b in FAIXAS_BUSCA_CORTE_VINCO:
+        regiao_l, regiao_t = int(w * l), int(h * t)
+        regiao_r, regiao_b = int(w * r), int(h * b)
+        x = regiao_l
+        while x < regiao_r:
+            tile = img.crop((x, regiao_t, min(x + LARGURA_TILE_FORCA_BRUTA, regiao_r), regiao_b))
+            rot = tile.rotate(-90, expand=True)
+            for psm in (6, 11):
+                texto = pytesseract.image_to_string(
+                    rot,
+                    lang="eng",
+                    config=f"--psm {psm} -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789?",
+                ).strip()
+                if "GENERIC" in texto.upper() or "FACA" in texto.upper():
+                    continue
+                m = RE_CODIGO_PLACA.search(texto.replace("\n", " "))
+                if m:
+                    return m.group(0)
+            x += PASSO_TILE_FORCA_BRUTA
+    return None
+
+
+def extrair_codigo_peca(caminho: Path) -> tuple[str, str | None, str, bool]:
     """Localiza e lê por OCR o código da peça, tentando os dois templates.
 
-    Retorna (motivo, código, tipo):
-      - ("ok", codigo, "COLAGEM")     — caixa vermelha "CÓDIGO PEÇA" (CBCG...).
-      - ("ok", codigo, "CORTE_VINCO") — código junto da placa/padrão braile
-                                          (nunca o código azul da FACA).
-      - ("erro", None, "")            — nenhum dos dois padrões foi
-                                          reconhecido (ou falha ao abrir a
-                                          imagem) — inclui folhas de
-                                          aprovação de FACA compartilhadas
-                                          entre vários itens, que não têm
-                                          um código de peça individual.
+    Retorna (motivo, código, tipo, baixa_confianca):
+      - ("ok", codigo, "COLAGEM", False)     — caixa vermelha "CÓDIGO PEÇA"
+                                                 (CBCG...).
+      - ("ok", codigo, "CORTE_VINCO", False) — código junto da placa/padrão
+                                                 braile, achado pelo caminho
+                                                 rápido (nunca o código azul
+                                                 da FACA).
+      - ("ok", codigo, "CORTE_VINCO", True)  — mesma coisa, mas só achado no
+                                                 último fallback (força
+                                                 bruta): texto pequeno
+                                                 demais/scan ruim o
+                                                 bastante pra valer a pena
+                                                 uma conferência manual —
+                                                 ver `baixa_confianca` no
+                                                 dashboard.
+      - ("erro", None, "", False)            — nenhum dos dois padrões foi
+                                                 reconhecido (ou falha ao
+                                                 abrir a imagem) — inclui
+                                                 folhas de aprovação de FACA
+                                                 compartilhadas entre vários
+                                                 itens, que não têm um
+                                                 código de peça individual.
     """
     try:
         img = Image.open(caminho)
@@ -363,17 +518,32 @@ def extrair_codigo_peca(caminho: Path) -> tuple[str, str | None, str]:
                 lang="eng",
                 config="--psm 7 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789?",
             ).strip()
-            if texto:
-                return "ok", texto, "COLAGEM"
+            # Bug real achado (item 618116 e outros): em alguns arquivos não
+            # existe caixa "CÓDIGO PEÇA" nenhuma, e o texto vermelho mais
+            # próximo do quadrante de busca é o rótulo "CORTE E VINCO"
+            # (categoria da peça, não um código) — sem essa checagem ele
+            # virava "ok" com codigo_peca="CORTEEVINCO". Um código de
+            # verdade sempre tem dígito; texto puramente alfabético não é
+            # código, então cai pro fallback CORTE_VINCO abaixo.
+            if texto and any(c.isdigit() for c in texto):
+                return "ok", texto, "COLAGEM", False
 
         codigo_cv = _achar_codigo_corte_vinco(img)
         if codigo_cv:
-            return "ok", codigo_cv, "CORTE_VINCO"
+            return "ok", codigo_cv, "CORTE_VINCO", False
+
+        codigo_cv_bruto = _achar_codigo_corte_vinco_bruto(img)
+        if codigo_cv_bruto:
+            return "ok", codigo_cv_bruto, "CORTE_VINCO", False
+
+        codigo_cv_forca = _achar_codigo_corte_vinco_forca_bruta(img)
+        if codigo_cv_forca:
+            return "ok", codigo_cv_forca, "CORTE_VINCO", True
     except Exception as e:
         log(f"ERRO_OCR em {caminho}: {e}")
-        return "erro", None, ""
+        return "erro", None, "", False
 
-    return "erro", None, ""
+    return "erro", None, "", False
 
 
 def codigo_valido(codigo: str | None) -> bool:
@@ -448,7 +618,7 @@ def varrer_pastas() -> list[Path]:
 
 
 def processar_arquivo(caminho: Path) -> Resultado:
-    motivo, codigo, tipo = extrair_codigo_peca(caminho)
+    motivo, codigo, tipo, baixa_confianca = extrair_codigo_peca(caminho)
     m_item = RE_ITEM_DO_NOME.match(caminho.stem)
     item = m_item.group(1) if m_item else caminho.stem
 
@@ -467,9 +637,11 @@ def processar_arquivo(caminho: Path) -> Resultado:
         codigo_peca=codigo or "",
         tipo=tipo,
         status=status,
+        baixa_confianca=baixa_confianca,
     )
 
-    log(f"[{status}] {caminho.name}  item={item}  tipo={tipo or '?'}  código={codigo!r}")
+    sinalizador = " [BAIXA CONFIANÇA]" if baixa_confianca else ""
+    log(f"[{status}]{sinalizador} {caminho.name}  item={item}  tipo={tipo or '?'}  código={codigo!r}")
     return resultado
 
 
