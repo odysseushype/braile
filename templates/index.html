@@ -46,6 +46,13 @@
     </div>
   </section>
 
+  {% if novos %}
+  <p class="aviso-novos">
+    🟢 <strong>{{ novos | length }}</strong> arquivo(s) processado(s) na última varredura desta sessão —
+    destacados na tabela abaixo (borda verde à esquerda).
+  </p>
+  {% endif %}
+
   <p class="legenda-tipo">
     <span class="chip chip-colagem">COLAGEM</span> código CBCG (vermelho) &nbsp;·&nbsp;
     <span class="chip chip-corte-vinco">CORTE_VINCO</span> código CB (preto, junto à placa braile — nunca o código azul da FACA) &nbsp;·&nbsp;
@@ -57,6 +64,7 @@
     <table>
       <thead>
         <tr>
+          <th></th>
           <th>Status</th>
           <th>Item</th>
           <th>Tipo</th>
@@ -68,7 +76,8 @@
       </thead>
       <tbody>
         {% for r in linhas %}
-        <tr class="linha-{{ r.status | lower | replace('_', '-') }}">
+        <tr class="linha-{{ r.status | lower | replace('_', '-') }} {{ 'linha-nova' if r.arquivo in novos else '' }}">
+          <td>{% if r.arquivo in novos %}<span class="badge badge-novo" title="Processado na última varredura">NOVO</span>{% endif %}</td>
           <td><span class="badge badge-{{ r.status | lower | replace('_', '-') }}">{{ r.status.replace('_', ' ') }}</span></td>
           <td>{{ r.item }}</td>
           <td>{% if r.tipo %}<span class="chip chip-{{ r.tipo | lower | replace('_', '-') }}">{{ r.tipo.replace('_', ' ') }}</span>{% else %}—{% endif %}</td>
@@ -81,7 +90,7 @@
           <td>{{ r.timestamp }}</td>
         </tr>
         {% else %}
-        <tr><td colspan="7" class="vazio">Nenhum resultado ainda. Clique em "Buscar novos" pra rodar o primeiro scan.</td></tr>
+        <tr><td colspan="8" class="vazio">Nenhum resultado ainda. Clique em "Buscar novos" pra rodar o primeiro scan.</td></tr>
         {% endfor %}
       </tbody>
     </table>

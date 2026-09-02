@@ -109,6 +109,18 @@ tr:last-child td { border-bottom: none; }
 .badge-sem-peca-cadastrada { background: var(--warn-bg); color: var(--warn); }
 .badge-erro-ocr { background: var(--err-bg); color: var(--err); }
 .badge-baixa-confianca { background: var(--baixa-confianca-bg); color: var(--baixa-confianca); margin-left: 6px; }
+.badge-novo { background: var(--ok-bg); color: var(--ok); }
+
+.aviso-novos {
+  margin: -6px 0 14px;
+  padding: 10px 14px;
+  background: var(--ok-bg);
+  color: var(--ok);
+  border-radius: 8px;
+  font-size: 13px;
+}
+
+.linha-nova { box-shadow: inset 3px 0 0 var(--ok); }
 
 .legenda-tipo {
   margin: -10px 0 16px;
