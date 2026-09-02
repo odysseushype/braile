@@ -192,6 +192,13 @@ class Resultado:
 # ---------------------------------------------------------------------------
 
 def carregar_estado() -> set[str]:
+    """Retorna o conjunto de NOMES de arquivo (não caminho completo) já
+    processados. Guardar só o nome (em vez do caminho absoluto) é
+    proposital: assim o mesmo `vigia_braile_estado.json` funciona
+    independente de onde a pasta de imagens está montada (H:\\... em
+    produção, uma cópia local em teste, etc.) — inclusive dá pra gerar um
+    estado "adiantado" fora daqui (ex.: depois de um lote de testes) e
+    simplesmente colocá-lo do lado do .exe pra não reprocessar tudo nele."""
     if not ESTADO_FILE.exists():
         return set()
     try:
@@ -201,9 +208,9 @@ def carregar_estado() -> set[str]:
         return set()
 
 
-def salvar_estado(caminhos: set[str]) -> None:
+def salvar_estado(nomes: set[str]) -> None:
     ESTADO_FILE.write_text(
-        json.dumps(sorted(caminhos), ensure_ascii=False, indent=2),
+        json.dumps(sorted(nomes), ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
 
@@ -683,16 +690,17 @@ def ler_resultados() -> list[dict]:
     return linhas
 
 
-def _ultimo_status_por_caminho() -> dict[str, str]:
-    """Pra cada arquivo já registrado no CSV, o status da última passada
-    (linhas mais recentes por último no arquivo, então elas vencem)."""
+def _ultimo_status_por_nome() -> dict[str, str]:
+    """Pra cada NOME de arquivo já registrado no CSV, o status da última
+    passada (linhas mais recentes por último no arquivo, então elas
+    vencem). Chave por nome, não caminho completo — mesmo motivo do
+    estado (ver `carregar_estado`)."""
     status: dict[str, str] = {}
     if not CSV_FILE.exists():
         return status
     with CSV_FILE.open(newline="", encoding="utf-8") as f:
         for row in csv.DictReader(f):
-            caminho = str(Path(row["pasta"]) / row["arquivo"])
-            status[caminho] = row["status"]
+            status[row["arquivo"]] = row["status"]
     return status
 
 
@@ -708,16 +716,16 @@ def executar_scan(reprocessar_pendentes: bool = False) -> list[Resultado]:
     """
     conhecidos = carregar_estado()
     todos = varrer_pastas()
-    caminhos_atuais = {str(p) for p in todos}
+    nomes_atuais = {p.name for p in todos}
 
-    a_processar = set(p for p in todos if str(p) not in conhecidos)
+    a_processar = set(p for p in todos if p.name not in conhecidos)
 
     if reprocessar_pendentes:
         pendentes = {
-            c for c, s in _ultimo_status_por_caminho().items()
+            nome for nome, s in _ultimo_status_por_nome().items()
             if s in ("SEM_PECA_CADASTRADA", "ERRO_OCR")
         }
-        a_processar |= {p for p in todos if str(p) in pendentes}
+        a_processar |= {p for p in todos if p.name in pendentes}
 
     resultados: list[Resultado] = []
     for caminho in sorted(a_processar):
@@ -726,7 +734,7 @@ def executar_scan(reprocessar_pendentes: bool = False) -> list[Resultado]:
     if resultados:
         gravar_csv(resultados)
 
-    salvar_estado(caminhos_atuais)
+    salvar_estado(nomes_atuais)
     return resultados
 
 

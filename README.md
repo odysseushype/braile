@@ -145,3 +145,14 @@ imagem original antes de usar esse código em outro sistema.
 e `vigia_braile_resultado.csv` são gerados/editados ao lado do `.exe` (ou
 dos `.py` em dev) e ficam de fora do git (ver `.gitignore`) — contêm
 caminhos internos da rede da empresa.
+
+`vigia_braile_estado.json` guarda só o **nome** de cada arquivo já
+processado (não o caminho completo) — de propósito, pra funcionar igual
+não importa em qual pasta/drive as imagens estão montadas. Na prática
+isso permite "adiantar" um ambiente novo: gerar `vigia_braile_estado.json`
++ `vigia_braile_resultado.csv` num lote de teste (ou numa rodada manual) e
+colocar os dois do lado do `.exe` em produção — o próximo "Buscar novos"
+não reprocessa o que já está no estado, só o que for de fato novo. Um CSV
+sem o estado correspondente ainda ajuda a enxergar o histórico no
+dashboard, mas sozinho não evita reprocessamento — quem decide o que
+pular é o `vigia_braile_estado.json`.
