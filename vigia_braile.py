@@ -658,13 +658,27 @@ def gravar_csv(resultados: list[Resultado]) -> None:
             writer.writerow(asdict(r))
 
 
+# Valor default pra cada coluna quando ela não existe no CSV (arquivo
+# gerado por uma versão mais antiga do programa, de antes da coluna
+# existir — ex.: `tipo` e `baixa_confianca` foram adicionadas depois).
+# Sem isso, ler um CSV velho quebra o dashboard inteiro com KeyError na
+# primeira linha que faltar a coluna nova (bug real: usuário testou um
+# .exe atualizado apontando pra uma pasta com CSV de uma versão anterior).
+_PADRAO_POR_COLUNA = {"tipo": "", "baixa_confianca": "False"}
+
+
 def ler_resultados() -> list[dict]:
     """Lê o CSV completo (usado pelo dashboard). Retorna lista de dicts, mais
-    recente primeiro."""
+    recente primeiro — sempre com todas as colunas atuais preenchidas,
+    mesmo que o CSV em disco seja de uma versão mais antiga do programa."""
     if not CSV_FILE.exists():
         return []
     with CSV_FILE.open(newline="", encoding="utf-8") as f:
         linhas = list(csv.DictReader(f))
+    for linha in linhas:
+        for campo in FIELDNAMES:
+            if not linha.get(campo):
+                linha[campo] = _PADRAO_POR_COLUNA.get(campo, "")
     linhas.reverse()
     return linhas
 
