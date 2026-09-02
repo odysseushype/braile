@@ -86,12 +86,17 @@ Rodar só o extrator, sem dashboard: `python3 vigia_braile.py`.
   generosas, não um recorte fixo, então toleram variação de margem entre
   scans; ajustar só se o layout do template mudar de vez.
 
-## Duplicados (mesmo arquivo em duas pastas)
+## Duplicados
 
-Se o mesmo nome de arquivo aparecer em mais de uma pasta configurada (ex.:
-uma cópia antiga em `IMAGENS_ANTIGAS` e uma mais nova em `IMAGENS_ATUAIS`),
-o scan usa só a versão com **data de modificação mais recente** — a outra é
-ignorada (fica registrado um aviso no log).
+- **Mesmo nome em duas pastas** (ex.: uma cópia antiga em `IMAGENS_ANTIGAS`
+  e uma mais nova em `IMAGENS_ATUAIS`) — o scan usa só a versão com **data
+  de modificação mais recente**; a outra é ignorada (aviso no log).
+- **`_BRAILE` e `_RELEVO_BRAILE` do mesmo item** — só o `_BRAILE`
+  (não-relevo) é processado. O `_RELEVO_BRAILE` costuma ser a folha de
+  aprovação da FACA (sem código de peça individual), então aqui a
+  preferência é sempre pelo não-relevo, **independente de qual dos dois é
+  mais recente** — o RELEVO às vezes tem data mais nova, mas não é o que
+  tem o código.
 
 ## Limitações conhecidas
 

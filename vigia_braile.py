@@ -399,6 +399,12 @@ def varrer_pastas() -> list[Path]:
     cópia antiga em IMAGENS_ANTIGAS e uma mais nova em IMAGENS_ATUAIS),
     mantém só a versão com data de modificação mais recente — as demais são
     ignoradas, não processadas as duas.
+
+    Quando o mesmo item tem um arquivo "_BRAILE" e um "_RELEVO_BRAILE", só o
+    "_BRAILE" é mantido — o "_RELEVO_BRAILE" costuma ser a folha de
+    aprovação da FACA (sem código de peça individual), então dar prioridade
+    à data de modificação erraria aqui (o RELEVO às vezes é o mais recente
+    dos dois, mas não é o que tem o código).
     """
     prefixos = tuple(prefixos_item())
     encontrados: dict[str, Path] = {}
@@ -421,7 +427,24 @@ def varrer_pastas() -> list[Path]:
             elif p.stat().st_mtime > existente.stat().st_mtime:
                 log(f"AVISO: '{p.name}' duplicado em duas pastas — usando o mais recente: {p.parent}")
                 encontrados[chave] = p
-    return list(encontrados.values())
+
+    por_item: dict[str, list[Path]] = {}
+    for p in encontrados.values():
+        m_item = RE_ITEM_DO_NOME.match(p.stem)
+        chave_item = m_item.group(1) if m_item else p.stem
+        por_item.setdefault(chave_item, []).append(p)
+
+    resultado: list[Path] = []
+    for item, arquivos in por_item.items():
+        nao_relevo = [p for p in arquivos if "relevo" not in p.stem.lower()]
+        if nao_relevo and len(nao_relevo) < len(arquivos):
+            for p in arquivos:
+                if p not in nao_relevo:
+                    log(f"AVISO: ignorando '{p.name}' (RELEVO) — item {item} já tem um _BRAILE não-relevo.")
+            resultado.extend(nao_relevo)
+        else:
+            resultado.extend(arquivos)
+    return resultado
 
 
 def processar_arquivo(caminho: Path) -> Resultado:
