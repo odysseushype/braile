@@ -113,15 +113,25 @@ LIMIAR_VERMELHO_MIN = 120
 LIMIAR_VERMELHO_DIF = 60
 
 # Faixas de busca (esquerda, topo, direita, baixo em % da imagem) pro código
-# CORTE_VINCO ("CB... GENERICO FACA"), usado quando não há caixa vermelha.
-# Nas amostras reais essa frase aparece tanto perto do topo quanto perto do
-# rodapé da folha — por isso duas faixas em vez de uma área única: rodar o
-# OCR na página inteira de uma vez faz o Tesseract errar a segmentação e
-# "perder" o texto que teria lido bem numa região menor.
+# CORTE_VINCO, usado quando não há caixa vermelha. Nas amostras reais o
+# código aparece tanto perto do topo quanto perto do rodapé da folha — por
+# isso duas faixas em vez de uma área única: rodar o OCR na página inteira
+# de uma vez faz o Tesseract errar a segmentação e "perder" texto que teria
+# lido bem numa região menor.
 FAIXAS_BUSCA_CORTE_VINCO = [
     (0.30, 0.0, 1.0, 0.60),
     (0.28, 0.30, 1.0, 1.0),
 ]
+
+# Tamanho mínimo de um "candidato a código" (depois de tirar espaço/pontuação)
+# achado na varredura grosseira de palavras da faixa.
+TAMANHO_MIN_CANDIDATO = 5
+
+# Padding (px) e fator de ampliação usados no recorte fino em volta da
+# palavra-candidata, antes do segundo passe de OCR (ver `_ler_codigo_fino`).
+PAD_CANDIDATO_X = 25
+PAD_CANDIDATO_Y = 4
+AMPLIACAO_CANDIDATO = 6
 
 ESTADO_FILE = base_dir() / "vigia_braile_estado.json"
 LOG_FILE = base_dir() / "vigia_braile.log"
@@ -137,11 +147,9 @@ if _TESSERACT_EMBUTIDO.exists():
 # Ajustar quando souber o padrão exato do nome.
 RE_ITEM_DO_NOME = re.compile(r"^(\d+)")
 
-# Código CORTE_VINCO: "CB" + código, seguido (com espaço/quebra de linha no
-# meio, tolerado pelo \s*) da frase "GENERICO FACA" — é essa frase ao lado que
-# distingue o código da peça de outros códigos "CB..." que aparecem na folha
-# (ex.: o código da matriz braile, que não é o que nos interessa aqui).
-RE_CORTE_VINCO = re.compile(r"(CB[0-9A-Z?]{4,12})\s*GEN[EÉ]RICO\s*FACA", re.IGNORECASE)
+# Formato do código depois do OCR fino (ver `_ler_codigo_fino`): "CB" + até
+# 8 caracteres alfanuméricos/"?".
+RE_CODIGO_PLACA = re.compile(r"CB[0-9A-Z?]{3,8}")
 
 
 # ---------------------------------------------------------------------------
@@ -243,24 +251,89 @@ def _achar_caixa_vermelha(img: Image.Image) -> tuple[int, int, int, int] | None:
     return (l + x0, t + y0, l + x1, t + y1)
 
 
-def _achar_codigo_corte_vinco(img: Image.Image) -> str | None:
-    """Procura o código CORTE_VINCO ("CB..." seguido de "GENERICO FACA"),
-    usado quando não há caixa vermelha na folha.
+def _candidato_valido(txt: str) -> bool:
+    """Filtro grosseiro pra decidir se uma palavra achada pelo OCR de texto
+    livre vale a pena ser refinada: precisa ter tamanho mínimo e misturar
+    letra com número (só números = provavelmente o número do item; só
+    letras = provavelmente uma palavra comum, tipo "GENERICO")."""
+    limpo = re.sub(r"[^A-Z0-9?]", "", txt.upper())
+    if len(limpo) < TAMANHO_MIN_CANDIDATO:
+        return False
+    return any(c.isalpha() for c in limpo) and any(c.isdigit() for c in limpo)
 
-    Roda OCR em texto livre (não é uma caixa isolada como no caso da
-    colagem) em duas faixas verticais — nas amostras reais essa frase
-    aparece tanto perto do topo quanto perto do rodapé, dependendo do
-    template — e usa `RE_CORTE_VINCO` pra achar o código certo em meio ao
-    resto do texto da folha (incluindo outros códigos "CB..." que não são o
-    código da peça, como o da matriz braile).
+
+def _ler_codigo_fino(palavra: Image.Image, vertical: bool) -> str | None:
+    """Segundo passe de OCR, bem ampliado e com charset restrito, numa
+    palavra-candidata já isolada. Crucial pra não confundir "???"
+    (placeholder de peça não fechada) com dígitos tipo "222" — o que
+    acontecia com o texto pequeno/vertical desse template rodando OCR de
+    texto livre direto.
+
+    A orientação (o texto às vezes vem de baixo pra cima, rotacionado) e o
+    PSM que funciona melhor dependem de a palavra ser mais alta que larga
+    (vertical) ou não — calibrado em cima de amostras reais dos dois casos.
+    """
+    rot = palavra.rotate(-90, expand=True) if vertical else palavra
+    psms = (11, 7) if vertical else (8, 6, 7, 13)
+    for psm in psms:
+        texto = pytesseract.image_to_string(
+            rot,
+            lang="eng",
+            config=f"--psm {psm} -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789?",
+        ).strip()
+        m = RE_CODIGO_PLACA.search(texto.replace("\n", " "))
+        if m:
+            return m.group(0)
+    return None
+
+
+def _achar_codigo_corte_vinco(img: Image.Image) -> str | None:
+    """Procura o código da peça nos templates sem caixa vermelha: o código
+    impresso ao lado da placa/padrão braile (preto, às vezes vertical).
+
+    Importante: NÃO é o código azul junto de "GENERICO FACA" — esse é o
+    código da FACA (ferramenta de corte-vinco), não da peça. O código da
+    peça normalmente aparece antes dele na folha, por isso ele é
+    explicitamente excluído (`proximas` abaixo) quando encontrado colado a
+    "GENERICO"/"FACA".
+
+    Estratégia em duas passadas: (1) OCR de texto livre, grosseiro, só pra
+    localizar a posição aproximada da palavra-candidata (`image_to_data`
+    dá a caixa de cada palavra); (2) recorta bem apertado em volta dela,
+    amplia bastante e refaz o OCR com charset restrito (`_ler_codigo_fino`)
+    pra uma leitura limpa.
     """
     w, h = img.size
     for l, t, r, b in FAIXAS_BUSCA_CORTE_VINCO:
-        crop = img.crop((int(w * l), int(h * t), int(w * r), int(h * b)))
-        texto = pytesseract.image_to_string(crop, lang="por+eng")
-        m = RE_CORTE_VINCO.search(texto)
-        if m:
-            return m.group(1).strip().upper()
+        regiao_l, regiao_t = int(w * l), int(h * t)
+        regiao = img.crop((regiao_l, regiao_t, int(w * r), int(h * b)))
+        data = pytesseract.image_to_data(regiao, lang="por+eng", output_type=pytesseract.Output.DICT)
+
+        for i, txt in enumerate(data["text"]):
+            if not _candidato_valido(txt.strip()):
+                continue
+            proximas = " ".join(data["text"][i + 1:i + 4]).upper()
+            if "GENERIC" in proximas or "FACA" in proximas:
+                continue
+
+            lx, ty = data["left"][i], data["top"][i]
+            largura, altura = data["width"][i], data["height"][i]
+            if largura < 3 or altura < 3:
+                continue
+
+            x0 = max(regiao_l + lx - PAD_CANDIDATO_X, 0)
+            y0 = max(regiao_t + ty - PAD_CANDIDATO_Y, 0)
+            x1 = min(regiao_l + lx + largura + PAD_CANDIDATO_X, w)
+            y1 = min(regiao_t + ty + altura + PAD_CANDIDATO_Y, h)
+            palavra = img.crop((x0, y0, x1, y1))
+            palavra = palavra.resize(
+                (palavra.width * AMPLIACAO_CANDIDATO, palavra.height * AMPLIACAO_CANDIDATO),
+                Image.LANCZOS,
+            )
+
+            resultado = _ler_codigo_fino(palavra, vertical=altura > largura)
+            if resultado:
+                return resultado
     return None
 
 
@@ -269,10 +342,14 @@ def extrair_codigo_peca(caminho: Path) -> tuple[str, str | None, str]:
 
     Retorna (motivo, código, tipo):
       - ("ok", codigo, "COLAGEM")     — caixa vermelha "CÓDIGO PEÇA" (CBCG...).
-      - ("ok", codigo, "CORTE_VINCO") — código "CB..." + "GENERICO FACA".
+      - ("ok", codigo, "CORTE_VINCO") — código junto da placa/padrão braile
+                                          (nunca o código azul da FACA).
       - ("erro", None, "")            — nenhum dos dois padrões foi
                                           reconhecido (ou falha ao abrir a
-                                          imagem).
+                                          imagem) — inclui folhas de
+                                          aprovação de FACA compartilhadas
+                                          entre vários itens, que não têm
+                                          um código de peça individual.
     """
     try:
         img = Image.open(caminho)

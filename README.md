@@ -11,7 +11,7 @@ reconhece os dois:
 | Tipo | Como aparece | Exemplo |
 |---|---|---|
 | **COLAGEM** | código `CBCG...`, impresso em **vermelho**, numa caixa com o rótulo "CÓDIGO PEÇA" no canto superior direito | `CBCG500211596` |
-| **CORTE_VINCO** | código `CB...` (sem o G), impresso em **azul**, na frase "`<código>` GENERICO FACA `<nº faca>`" — posição mais variável na folha | `CB26C31A` |
+| **CORTE_VINCO** | código `CB...` impresso em **preto**, colado à placa/padrão braile (às vezes na vertical) — não confundir com o código **azul** ao lado de "GENERICO FACA", que é o código da FACA (ferramenta), não da peça | `CB17G19A` |
 
 Duas partes:
 
@@ -99,9 +99,16 @@ ignorada (fica registrado um aviso no log).
   "BRAILE") não é reconhecido pelo filtro `*_BRAILE*.jpg`. Se isso
   acontecer com frequência em produção, é provável que seja um typo pontual
   na hora de salvar o arquivo — vale confirmar com quem gera os arquivos.
-- A detecção CORTE_VINCO foi calibrada em cima de só 2 amostras reais; deu
-  100% de acerto nelas, mas vale validar com mais exemplos antes de confiar
-  cegamente no resultado em produção.
+- A detecção CORTE_VINCO foi calibrada em cima de 7 amostras reais (2
+  templates visuais diferentes); deu certo em 6/7 — ainda vale validar com
+  mais exemplos antes de confiar cegamente no resultado em produção. Erros
+  típicos de OCR nesse template ficam entre O/0 (ex.: `CB17IO9A` em vez de
+  `CB17I09A`).
+- Folhas de aprovação de FACA compartilhadas entre vários itens (várias
+  peças/SKUs na mesma folha, sem um código de peça braile individual —
+  só o código da FACA repetido) caem como `ERRO_OCR`: não tem como saber
+  OK/SEM PEÇA CADASTRADA a partir desse tipo de arquivo, então fica pra
+  conferência manual.
 
 ## Dados gerados (não versionados)
 
