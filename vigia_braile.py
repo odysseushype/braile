@@ -675,9 +675,15 @@ _PADRAO_POR_COLUNA = {"tipo": "", "baixa_confianca": "False"}
 
 
 def ler_resultados() -> list[dict]:
-    """Lê o CSV completo (usado pelo dashboard). Retorna lista de dicts, mais
-    recente primeiro — sempre com todas as colunas atuais preenchidas,
-    mesmo que o CSV em disco seja de uma versão mais antiga do programa."""
+    """Lê o CSV completo (usado pelo dashboard). Retorna lista de dicts,
+    ordenada por `timestamp` decrescente (mais recente primeiro) — sempre
+    com todas as colunas atuais preenchidas, mesmo que o CSV em disco seja
+    de uma versão mais antiga do programa.
+
+    Ordena explicitamente pelo timestamp em vez de só inverter a ordem do
+    arquivo: o timestamp ISO (`AAAA-MM-DDTHH:MM:SS`) ordena certinho como
+    string, e isso deixa a ordem de exibição correta e óbvia sem depender
+    de o CSV ter sido gravado numa ordem cronológica particular."""
     if not CSV_FILE.exists():
         return []
     with CSV_FILE.open(newline="", encoding="utf-8") as f:
@@ -686,7 +692,7 @@ def ler_resultados() -> list[dict]:
         for campo in FIELDNAMES:
             if not linha.get(campo):
                 linha[campo] = _PADRAO_POR_COLUNA.get(campo, "")
-    linhas.reverse()
+    linhas.sort(key=lambda linha: linha["timestamp"], reverse=True)
     return linhas
 
 
@@ -727,8 +733,16 @@ def executar_scan(reprocessar_pendentes: bool = False) -> list[Resultado]:
         }
         a_processar |= {p for p in todos if p.name in pendentes}
 
+    # Ordena pela data de modificação do arquivo (ordem cronológica real de
+    # criação/reimpressão), não pelo nome — achado real: ordenar por nome
+    # agrupa tudo por prefixo numérico (todo o lote 618xxx processado antes
+    # do 50021xxx, já que "5" < "6" na comparação de string), e como o
+    # dashboard mostra o mais recente primeiro invertendo a ordem de
+    # gravação, isso fazia o 618xxx aparecer inteiro no topo e o 50021xxx
+    # inteiro no final — parecendo agrupado por prefixo em vez de
+    # realmente ordenado por quando foi processado.
     resultados: list[Resultado] = []
-    for caminho in sorted(a_processar):
+    for caminho in sorted(a_processar, key=lambda p: p.stat().st_mtime):
         resultados.append(processar_arquivo(caminho))
 
     if resultados:
